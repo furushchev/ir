@@ -162,21 +162,8 @@ fn sync_one_inner(
     let dest = dir.join(&locked.path);
     let state = provider.status(&dest)?;
     if state.present && pin_matches(&resolved, state.current.as_deref()) {
-        // Changes strictly under a nested managed repository are ir's own
-        // doing (it materialized them there); only other local changes
-        // count as dirty for the up-to-date decision.
-        let nested: Vec<PathBuf> = repos
-            .iter()
-            .map(|r| &r.path)
-            .filter(|p| *p != &locked.path && p.starts_with(&locked.path))
-            .filter_map(|p| p.strip_prefix(&locked.path).ok().map(PathBuf::from))
-            .collect();
-        let dirty = match provider.changed_paths(&dest)? {
-            Some(paths) => paths
-                .iter()
-                .any(|p| !nested.iter().any(|n| p == n || p.starts_with(n))),
-            None => state.dirty,
-        };
+        let dirty =
+            crate::inspect::effective_dirty(provider.as_ref(), &dest, repos, locked, state.dirty)?;
         if !dirty {
             return Ok(SyncStatus::UpToDate);
         }

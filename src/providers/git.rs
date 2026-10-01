@@ -31,6 +31,18 @@ impl GitProvider {
         cmd
     }
 
+    /// The mirror's recorded origin URL, if any.
+    fn origin_url(bare: &Path) -> Option<String> {
+        let mut cmd = Self::git_cmd();
+        cmd.arg("-C")
+            .arg(bare)
+            .args(["config", "--get", "remote.origin.url"]);
+        process::run(&mut cmd, LOCAL_TIMEOUT)
+            .ok()
+            .map(|o| o.stdout_trimmed())
+            .filter(|s| !s.is_empty())
+    }
+
     fn bare_of(entry: &CacheEntry) -> Result<&Path> {
         match entry {
             CacheEntry::BareRepo(p) => Ok(p),
@@ -122,7 +134,13 @@ impl Provider for GitProvider {
     fn ensure_cached(&self, cache: &Cache, spec: &RepoSpec) -> Result<CacheEntry> {
         let key = cache.key(&spec.normalized_url());
         let bare = cache.bare_dir(&key);
-        if !bare.join("HEAD").exists() {
+        // A previous failed run can leave a bare repo behind (e.g. `init`
+        // succeeded but `fetch` failed), or the raw URL may have changed
+        // while the normalized key stayed the same. Verify the origin
+        // before reuse; otherwise a poisoned mirror fails forever.
+        if !bare.join("HEAD").exists()
+            || Self::origin_url(&bare).as_deref() != Some(spec.url.as_str())
+        {
             if bare.exists() {
                 fs::remove_dir_all(&bare)?;
             }

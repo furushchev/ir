@@ -88,7 +88,11 @@ pub enum VersionSpec {
 }
 
 impl VersionSpec {
-    fn classify(raw: Option<&str>, kind: SourceKind) -> Self {
+    /// Classify a raw version string the way manifests do: empty/absent is
+    /// the default; archives take a subdirectory; hex hashes and (for
+    /// hg/svn/bzr) integer revisions are exact revisions; anything else is
+    /// a branch/tag/bookmark ref.
+    pub fn classify(raw: Option<&str>, kind: SourceKind) -> Self {
         match raw.map(str::trim).filter(|s| !s.is_empty()) {
             None => VersionSpec::Default,
             Some(s) if kind.is_archive() => VersionSpec::Subdir(s.to_string()),

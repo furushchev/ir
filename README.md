@@ -6,7 +6,7 @@ lockfile, and fetch / place / version-sync every repository into a workspace —
 uv-style, but for source workspaces instead of Python packages.
 (The name is `uv` inverted: packages in, repos out — or the other way round.)
 
-## Status: Phase 4 complete
+## Status: Phase 5 complete
 
 - [x] Phase 0 — CLI skeleton + `.repos` / `.rosinstall` parsers + normalization
       (`RepoSpec { path, kind, url, version }`, path-traversal rejection,
@@ -26,18 +26,32 @@ uv-style, but for source workspaces instead of Python packages.
       (hg/svn/bzr revision vs git ref); sync is nested-repo aware
       (changes under a managed nested repo don't dirty the parent;
       parents materialize before children)
-- [ ] Phase 5 — `status`, `export`, `update`, `add`, `prune`, JSON output,
-      shell completions
+- [x] Phase 5 — `status` (nested-aware, vs `ir.lock`), `export` (vcstool
+      `.repos`, `--exact` for pinned revisions), `update` (whole workspace
+      or one subtree, with pin-change report), `add` / `init` / `prune`,
+      `cache clean` / `cache gc`, `--format json` for resolve/sync/status/
+      update, `completions` (bash/zsh/fish/powershell/elvish).
+      Also: poisoned git mirrors (failed fetch / changed raw URL) are
+      detected via `remote.origin.url` and rebuilt instead of failing forever
 - [ ] Phase 6 — retries, shallow-fetch tuning, docs
 
-## Usage (Phase 4)
+## Usage (Phase 5)
 
 ```sh
 cargo build
 ./target/debug/ir -C /path/to/workspace resolve   # recursive resolve -> ir.lock
 ./target/debug/ir -C /path/to/workspace sync       # parallel sync from ir.lock
 ./target/debug/ir -C /path/to/workspace sync --jobs 8 --force
-cargo test     # 34 tests: manifest, providers, resolver, lockfile, sync
+./target/debug/ir -C /path/to/workspace status     # vs ir.lock: up-to-date / modified / outdated / missing
+./target/debug/ir -C /path/to/workspace update     # re-resolve, report pin changes
+./target/debug/ir -C /path/to/workspace update some/repo  # one subtree only
+./target/debug/ir -C /path/to/workspace export --exact -o deps.repos
+./target/debug/ir -C /path/to/workspace add https://example.com/foo.git --version main
+./target/debug/ir -C /path/to/workspace prune      # remove undeclared checkouts
+./target/debug/ir -C /path/to/workspace cache gc   # drop unreferenced cache entries
+./target/debug/ir --format json -C /path/to/workspace status
+./target/debug/ir completions bash >> ~/.bash_completion
+cargo test     # 40 tests: manifest, providers, resolver, lockfile, sync, inspect, commands
 ```
 
 ## Providers
@@ -69,4 +83,6 @@ into `GitCliProvider` / `GitLibProvider`; until then the role-based
 - `src/providers/svn.rs` — `SvnProvider` (+ integration tests)
 - `src/providers/bzr.rs` — `BzrProvider` (+ integration tests)
 - `src/providers/archive.rs` — `TarProvider` / `ZipProvider` (+ tests)
+- `src/inspect.rs` — workspace inspection shared by `status` and sync
+- `src/commands.rs` — Phase 5 command implementations (binary-private)
 - `src/main.rs` — `ir` CLI

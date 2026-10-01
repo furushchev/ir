@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod error;
+pub mod inspect;
 pub mod lock;
 pub mod manifest;
 pub mod process;
@@ -17,7 +18,8 @@ pub mod sync;
 
 pub use cache::{Cache, CacheEntry};
 pub use error::{IrError, Result};
-pub use lock::{read_lock, write_lock, LockedRepo, LOCKFILE_NAME};
+pub use inspect::{effective_dirty, inspect, pin_current_matches, Inspection, RepoState};
+pub use lock::{read_lock, to_locked, write_lock, LockedRepo, LOCKFILE_NAME};
 pub use manifest::{
     discover_manifest, load_manifest, normalize_url, parse_repos, parse_rosinstall,
     validate_relative_path, Manifest, ManifestEntry, RepoSpec, SourceKind, VersionSpec,

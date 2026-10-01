@@ -1,15 +1,29 @@
 //! ir: workspace package manager CLI.
-//!
-//! `resolve` recursively resolves the workspace manifest and writes `ir.lock`.
-//! Other commands are wired up but not yet implemented.
+
+mod commands;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use ir_core::{
-    discover_manifest, load_manifest, Cache, Resolver, SyncOptions, SyncStatus, LOCKFILE_NAME,
-};
-use std::io::IsTerminal;
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
+use commands::Format;
+use ir_core::SourceKind;
 use std::path::PathBuf;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum FormatArg {
+    #[default]
+    Text,
+    Json,
+}
+
+impl From<FormatArg> for Format {
+    fn from(f: FormatArg) -> Self {
+        match f {
+            FormatArg::Text => Format::Text,
+            FormatArg::Json => Format::Json,
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -26,13 +40,17 @@ struct Cli {
     #[arg(long, global = true)]
     manifest: Option<PathBuf>,
 
+    /// Output format for resolve/sync/status/update.
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    format: FormatArg,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Create an empty workspace manifest.
+    /// Create an empty workspace manifest (.repos).
     Init,
     /// Resolve dependencies recursively and write ir.lock.
     Resolve,
@@ -45,22 +63,34 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Re-resolve (and update) one repository or everything.
-    Update { path: Option<String> },
-    /// Show sync status of the workspace.
+    /// Re-resolve and rewrite ir.lock, reporting pin changes.
+    Update {
+        /// Only update the subtree rooted at this manifest-declared path.
+        path: Option<String>,
+    },
+    /// Show sync status of the workspace against ir.lock.
     Status,
     /// Export the workspace state as a .repos file (vcstool compatible).
     Export {
+        /// Write to this file instead of stdout.
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Pin exact revisions instead of the requested versions.
         #[arg(long)]
         exact: bool,
     },
     /// Add a repository to the manifest.
     Add {
         url: String,
+        /// Workspace path (default: inferred from the URL).
         #[arg(long)]
         path: Option<String>,
+        /// Repository kind (default: inferred from the URL).
+        #[arg(long)]
+        kind: Option<SourceKind>,
+        /// Version: branch/tag/hash, integer revision, or archive subdir.
+        #[arg(long)]
+        version: Option<String>,
     },
     /// Remove materialized repositories that are no longer declared.
     Prune,
@@ -69,11 +99,18 @@ enum Command {
         #[command(subcommand)]
         action: CacheAction,
     },
+    /// Print shell completions.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum CacheAction {
+    /// Remove everything from the cache.
     Clean,
+    /// Remove cache entries not referenced by ir.lock.
     Gc,
 }
 
@@ -84,101 +121,69 @@ fn workspace_dir(cli: &Cli) -> Result<PathBuf> {
     }
 }
 
-fn load(cli: &Cli) -> Result<ir_core::Manifest> {
-    let dir = workspace_dir(cli)?;
-    let manifest_path = match &cli.manifest {
-        Some(p) => p.clone(),
-        None => discover_manifest(&dir).map_err(anyhow::Error::from)?,
-    };
-    load_manifest(&manifest_path).map_err(anyhow::Error::from)
-}
-
-fn cmd_sync(cli: &Cli, jobs: Option<usize>, force: bool) -> Result<()> {
-    let dir = workspace_dir(cli)?;
-    let lock_path = dir.join(LOCKFILE_NAME);
-    if !lock_path.is_file() {
-        anyhow::bail!("no {} found; run `ir resolve` first", lock_path.display());
-    }
-    let locked = ir_core::read_lock(&lock_path).map_err(anyhow::Error::from)?;
-    let cache = Cache::new().map_err(anyhow::Error::from)?;
-    let jobs = jobs.unwrap_or_else(|| {
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let dir = workspace_dir(&cli)?;
+    let format = Format::from(cli.format);
+    let jobs_default = || {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-    });
-    let progress = std::io::stderr().is_terminal();
-    let opts = SyncOptions {
-        jobs,
-        force,
-        progress,
     };
-    let outcomes = ir_core::sync_workspace(&dir, &cache, &locked, &opts);
-    let (mut synced, mut up_to_date, mut skipped, mut failed) = (0, 0, 0, 0);
-    for o in &outcomes {
-        match &o.status {
-            SyncStatus::UpToDate => up_to_date += 1,
-            SyncStatus::Synced => synced += 1,
-            SyncStatus::Skipped(m) => {
-                skipped += 1;
-                println!("○ {}: {m}", o.path.display());
-            }
-            SyncStatus::Failed(e) => {
-                failed += 1;
-                println!("✗ {}: {e}", o.path.display());
+    match &cli.command {
+        Command::Init => commands::cmd_init(&dir),
+        Command::Resolve => {
+            let cache = ir_core::Cache::new().map_err(anyhow::Error::from)?;
+            commands::cmd_resolve(&dir, cli.manifest.as_deref(), &cache, format)
+        }
+        Command::Sync { jobs, force } => {
+            let cache = ir_core::Cache::new().map_err(anyhow::Error::from)?;
+            commands::cmd_sync(
+                &dir,
+                &cache,
+                jobs.unwrap_or_else(jobs_default),
+                *force,
+                format,
+            )
+        }
+        Command::Update { path } => {
+            let cache = ir_core::Cache::new().map_err(anyhow::Error::from)?;
+            match path {
+                Some(p) => commands::cmd_update_one(&dir, &cache, p, format),
+                None => commands::cmd_update(&dir, &cache, format),
             }
         }
-    }
-    println!("synced {synced}, up-to-date {up_to_date}, skipped {skipped}, failed {failed}");
-    if failed > 0 {
-        anyhow::bail!("{failed} repositories failed to sync");
-    }
-    Ok(())
-}
-
-fn cmd_resolve(cli: &Cli) -> Result<()> {
-    let dir = workspace_dir(cli)?;
-    let manifest = load(cli)?;
-    let cache = Cache::new().map_err(anyhow::Error::from)?;
-    let repos = Resolver::new(&cache)
-        .resolve(&manifest)
-        .map_err(anyhow::Error::from)?;
-    let lock_path = dir.join(LOCKFILE_NAME);
-    ir_core::write_lock(&lock_path, &repos).map_err(anyhow::Error::from)?;
-    println!(
-        "# resolved {} repositories -> {}",
-        repos.len(),
-        lock_path.display()
-    );
-    for r in &repos {
-        let indent = "  ".repeat(r.depth);
-        println!(
-            "{indent}{} [{}] {} @ {} -> {}",
-            r.spec.path.display(),
-            r.spec.kind,
-            r.spec.normalized_url(),
-            r.spec.version,
-            r.pin()
-        );
-    }
-    Ok(())
-}
-
-fn not_yet(name: &str) -> Result<()> {
-    println!("{name}: not yet implemented (planned for a later phase)");
-    Ok(())
-}
-
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    match &cli.command {
-        Command::Init => not_yet("init"),
-        Command::Resolve => cmd_resolve(&cli),
-        Command::Sync { jobs, force } => cmd_sync(&cli, *jobs, *force),
-        Command::Update { .. } => not_yet("update"),
-        Command::Status => not_yet("status"),
-        Command::Export { .. } => not_yet("export"),
-        Command::Add { .. } => not_yet("add"),
-        Command::Prune => not_yet("prune"),
-        Command::Cache { .. } => not_yet("cache"),
+        Command::Status => commands::cmd_status(&dir, format),
+        Command::Export { output, exact } => commands::cmd_export(&dir, output.as_deref(), *exact),
+        Command::Add {
+            url,
+            path,
+            kind,
+            version,
+        } => {
+            let manifest_path = match &cli.manifest {
+                Some(p) => p.clone(),
+                None => ir_core::discover_manifest(&dir).map_err(anyhow::Error::from)?,
+            };
+            commands::cmd_add(
+                &manifest_path,
+                url,
+                path.as_deref(),
+                *kind,
+                version.as_deref(),
+            )
+        }
+        Command::Prune => commands::cmd_prune(&dir),
+        Command::Cache { action } => {
+            let cache = ir_core::Cache::new().map_err(anyhow::Error::from)?;
+            match action {
+                CacheAction::Clean => commands::cmd_cache_clean(&cache),
+                CacheAction::Gc => commands::cmd_cache_gc(&cache, &dir),
+            }
+        }
+        Command::Completions { shell } => {
+            clap_complete::generate(*shell, &mut Cli::command(), "ir", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }
