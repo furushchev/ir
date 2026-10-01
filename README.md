@@ -6,7 +6,7 @@ lockfile, and fetch / place / version-sync every repository into a workspace —
 uv-style, but for source workspaces instead of Python packages.
 (The name is `uv` inverted: packages in, repos out — or the other way round.)
 
-## Status: Phase 2 complete
+## Status: Phase 3 complete
 
 - [x] Phase 0 — CLI skeleton + `.repos` / `.rosinstall` parsers + normalization
       (`RepoSpec { path, kind, url, version }`, path-traversal rejection,
@@ -18,19 +18,22 @@ uv-style, but for source workspaces instead of Python packages.
       extraction, `.ir-archive` marker files)
 - [x] Phase 2 — recursive resolver + `ir.lock` (TOML, exact pins) +
       cycle / path / version conflict detection
-- [ ] Phase 3 — parallel sync + `indicatif` progress UI
+- [x] Phase 3 — parallel sync engine (rayon, per-URL cache locks) +
+      `indicatif` progress UI (overall bar + per-repo spinners),
+      `sync --jobs N --force`, up-to-date / skip / force-replace semantics
 - [ ] Phase 4 — Hg / Svn / Bzr providers
 - [ ] Phase 5 — `status`, `export`, `update`, `add`, `prune`, JSON output,
       shell completions
 - [ ] Phase 6 — retries, shallow-fetch tuning, docs
 
-## Usage (Phase 2)
+## Usage (Phase 3)
 
 ```sh
 cargo build
 ./target/debug/ir -C /path/to/workspace resolve   # recursive resolve -> ir.lock
-./target/debug/ir --manifest /path/to/.rosinstall resolve
-cargo test     # 20 tests: manifest, providers, resolver, lockfile
+./target/debug/ir -C /path/to/workspace sync       # parallel sync from ir.lock
+./target/debug/ir -C /path/to/workspace sync --jobs 8 --force
+cargo test     # 24 tests: manifest, providers, resolver, lockfile, sync
 ```
 
 ## Layout

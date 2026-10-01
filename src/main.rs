@@ -5,7 +5,10 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ir_core::{discover_manifest, load_manifest, Cache, Resolver, LOCKFILE_NAME};
+use ir_core::{
+    discover_manifest, load_manifest, Cache, Resolver, SyncOptions, SyncStatus, LOCKFILE_NAME,
+};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -33,8 +36,15 @@ enum Command {
     Init,
     /// Resolve dependencies recursively and write ir.lock.
     Resolve,
-    /// Fetch, place and version-sync every repository (needs lockfile).
-    Sync,
+    /// Fetch, place and version-sync every repository (needs ir.lock).
+    Sync {
+        /// Parallel jobs (default: number of CPUs).
+        #[arg(long)]
+        jobs: Option<usize>,
+        /// Replace existing checkouts whose state differs from the lockfile.
+        #[arg(long)]
+        force: bool,
+    },
     /// Re-resolve (and update) one repository or everything.
     Update { path: Option<String> },
     /// Show sync status of the workspace.
@@ -83,6 +93,48 @@ fn load(cli: &Cli) -> Result<ir_core::Manifest> {
     load_manifest(&manifest_path).map_err(anyhow::Error::from)
 }
 
+fn cmd_sync(cli: &Cli, jobs: Option<usize>, force: bool) -> Result<()> {
+    let dir = workspace_dir(cli)?;
+    let lock_path = dir.join(LOCKFILE_NAME);
+    if !lock_path.is_file() {
+        anyhow::bail!("no {} found; run `ir resolve` first", lock_path.display());
+    }
+    let locked = ir_core::read_lock(&lock_path).map_err(anyhow::Error::from)?;
+    let cache = Cache::new().map_err(anyhow::Error::from)?;
+    let jobs = jobs.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+    });
+    let progress = std::io::stderr().is_terminal();
+    let opts = SyncOptions {
+        jobs,
+        force,
+        progress,
+    };
+    let outcomes = ir_core::sync_workspace(&dir, &cache, &locked, &opts);
+    let (mut synced, mut up_to_date, mut skipped, mut failed) = (0, 0, 0, 0);
+    for o in &outcomes {
+        match &o.status {
+            SyncStatus::UpToDate => up_to_date += 1,
+            SyncStatus::Synced => synced += 1,
+            SyncStatus::Skipped(m) => {
+                skipped += 1;
+                println!("○ {}: {m}", o.path.display());
+            }
+            SyncStatus::Failed(e) => {
+                failed += 1;
+                println!("✗ {}: {e}", o.path.display());
+            }
+        }
+    }
+    println!("synced {synced}, up-to-date {up_to_date}, skipped {skipped}, failed {failed}");
+    if failed > 0 {
+        anyhow::bail!("{failed} repositories failed to sync");
+    }
+    Ok(())
+}
+
 fn cmd_resolve(cli: &Cli) -> Result<()> {
     let dir = workspace_dir(cli)?;
     let manifest = load(cli)?;
@@ -121,7 +173,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Command::Init => not_yet("init"),
         Command::Resolve => cmd_resolve(&cli),
-        Command::Sync => not_yet("sync"),
+        Command::Sync { jobs, force } => cmd_sync(&cli, *jobs, *force),
         Command::Update { .. } => not_yet("update"),
         Command::Status => not_yet("status"),
         Command::Export { .. } => not_yet("export"),

@@ -9,9 +9,11 @@ pub mod error;
 pub mod lock;
 pub mod manifest;
 pub mod process;
+pub mod progress;
 pub mod provider;
 pub mod providers;
 pub mod resolve;
+pub mod sync;
 
 pub use cache::{Cache, CacheEntry};
 pub use error::{IrError, Result};
@@ -22,3 +24,4 @@ pub use manifest::{
 };
 pub use provider::{provider_for, Provider, Resolved, WorktreeState};
 pub use resolve::{ResolvedRepo, Resolver};
+pub use sync::{sync_workspace, SyncOptions, SyncOutcome, SyncStatus};

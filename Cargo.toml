@@ -22,6 +22,8 @@ toml = "0.8"
 thiserror = "2"
 anyhow = "1"
 url = "2"
+rayon = "1"
+indicatif = "0.17"
 wait-timeout = "0.2"
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
 flate2 = "1"
