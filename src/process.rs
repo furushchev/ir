@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-use crate::error::{Result, WspmError};
+use crate::error::{Result, IrError};
 
 /// Default timeout for network-heavy commands (clone, fetch).
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -38,8 +38,8 @@ fn cmdline(cmd: &Command) -> String {
 
 /// Run a command to completion, capturing stdout/stderr.
 ///
-/// Returns [`WspmError::CommandFailed`] on non-zero exit and
-/// [`WspmError::CommandTimeout`] when the timeout elapses (the child is
+/// Returns [`IrError::CommandFailed`] on non-zero exit and
+/// [`IrError::CommandTimeout`] when the timeout elapses (the child is
 /// killed in that case).
 pub fn run(cmd: &mut Command, timeout: Duration) -> Result<CmdOutput> {
     let cmd_str = cmdline(cmd);
@@ -48,20 +48,20 @@ pub fn run(cmd: &mut Command, timeout: Duration) -> Result<CmdOutput> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|source| WspmError::SpawnFailed {
+        .map_err(|source| IrError::SpawnFailed {
             cmd: cmd_str.clone(),
             source,
         })?;
     match child
         .wait_timeout(timeout)
-        .map_err(|source| WspmError::SpawnFailed {
+        .map_err(|source| IrError::SpawnFailed {
             cmd: cmd_str.clone(),
             source,
         })? {
         Some(status) => {
             let output = child
                 .wait_with_output()
-                .map_err(|source| WspmError::SpawnFailed {
+                .map_err(|source| IrError::SpawnFailed {
                     cmd: cmd_str.clone(),
                     source,
                 })?;
@@ -71,7 +71,7 @@ pub fn run(cmd: &mut Command, timeout: Duration) -> Result<CmdOutput> {
                     stderr: output.stderr,
                 })
             } else {
-                Err(WspmError::CommandFailed {
+                Err(IrError::CommandFailed {
                     cmd: cmd_str,
                     status: status.to_string(),
                     stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
@@ -81,7 +81,7 @@ pub fn run(cmd: &mut Command, timeout: Duration) -> Result<CmdOutput> {
         None => {
             let _ = child.kill();
             let _ = child.wait();
-            Err(WspmError::CommandTimeout(cmd_str, timeout))
+            Err(IrError::CommandTimeout(cmd_str, timeout))
         }
     }
 }

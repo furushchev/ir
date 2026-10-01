@@ -1,16 +1,16 @@
 [package]
-name = "wspm"
+name = "ir"
 version = "0.1.0"
 edition = "2021"
 description = "Workspace package manager: recursively resolve .repos/.rosinstall dependencies, pin versions in a lockfile, and sync repositories into a workspace"
 license = "MIT"
 
 [lib]
-name = "wspm_core"
+name = "ir_core"
 path = "src/lib.rs"
 
 [[bin]]
-name = "wspm"
+name = "ir"
 path = "src/main.rs"
 
 [dependencies]

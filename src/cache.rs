@@ -1,12 +1,12 @@
 //! Local cache layout.
 //!
 //! ```text
-//! <cache>/wspm/
+//! <cache>/ir/
 //!   git/<sha256(url)>/        bare mirrors, one per repository URL
 //!   archives/<sha256(url)>.<ext>   downloaded tar/zip files
 //! ```
 //!
-//! The cache root defaults to `$XDG_CACHE_HOME/wspm` (or `~/.cache/wspm`).
+//! The cache root defaults to `$XDG_CACHE_HOME/ir` (or `~/.cache/ir`).
 
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -34,11 +34,11 @@ impl Cache {
             .map(PathBuf::from)
             .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
             .ok_or_else(|| {
-                crate::error::WspmError::Unsupported(
+                crate::error::IrError::Unsupported(
                     "cannot determine cache directory: set XDG_CACHE_HOME or HOME".into(),
                 )
             })?;
-        Ok(Self::with_root(base.join("wspm")))
+        Ok(Self::with_root(base.join("ir")))
     }
 
     /// Open a cache at an explicit root (used by tests).

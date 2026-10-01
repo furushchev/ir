@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
-/// Errors produced by wspm-core.
+/// Errors produced by ir-core.
 #[derive(Debug, Error)]
-pub enum WspmError {
+pub enum IrError {
     #[error("manifest parse error in {path}: {msg}")]
     ManifestParse { path: PathBuf, msg: String },
 
@@ -65,9 +65,9 @@ pub enum WspmError {
     Yaml(#[from] serde_yaml::Error),
 }
 
-pub type Result<T> = std::result::Result<T, WspmError>;
+pub type Result<T> = std::result::Result<T, IrError>;
 
-impl WspmError {
+impl IrError {
     pub fn manifest_parse(path: &Path, msg: impl Into<String>) -> Self {
         Self::ManifestParse {
             path: path.to_path_buf(),

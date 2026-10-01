@@ -1,4 +1,4 @@
-# wspm
+# ir
 
 Workspace package manager (Rust): recursively resolve repository dependencies
 declared in `.repos` (vcstool format) or `.rosinstall` files, pin versions in a
@@ -14,8 +14,8 @@ uv-style, but for source workspaces instead of Python packages.
       (bare-mirror cache, `init --bare` + `remote add` for uniform ref layout,
       resolve default/ref/hash, detached materialize, sparse subpaths,
       dirty detection), `TarProvider`/`ZipProvider` (download, sha256 cache,
-      safe extraction with Zip-Slip rejection, `.wspm-archive` marker files)
-- [ ] Phase 2 — recursive resolver + `wspm.lock` (TOML, sha256 pinning) +
+      safe extraction with Zip-Slip rejection, `.ir-archive` marker files)
+- [ ] Phase 2 — recursive resolver + `ir.lock` (TOML, sha256 pinning) +
       conflict / cycle detection
 - [ ] Phase 3 — cache layer + parallel sync + `indicatif` progress UI
 - [ ] Phase 4 — Hg / Svn / Bzr providers
@@ -27,14 +27,14 @@ uv-style, but for source workspaces instead of Python packages.
 
 ```sh
 cargo build
-./target/debug/wspm -C /path/to/workspace resolve   # parse + print normalized deps
-./target/debug/wspm --manifest /path/to/.rosinstall resolve
+./target/debug/ir -C /path/to/workspace resolve   # parse + print normalized deps
+./target/debug/ir --manifest /path/to/.rosinstall resolve
 cargo test     # 13 tests: manifest parsing + git/archive provider round-trips
 ```
 
 ## Layout
 
-- `src/lib.rs` — `wspm_core` library root
+- `src/lib.rs` — `ir_core` library root
 - `src/manifest.rs` — manifest parsing & normalization (+ unit tests)
 - `src/error.rs` — error types
 - `src/process.rs` — `std::process::Command` runner with timeouts
@@ -42,4 +42,4 @@ cargo test     # 13 tests: manifest parsing + git/archive provider round-trips
 - `src/provider.rs` — `Provider` trait + `provider_for` dispatch
 - `src/providers/git.rs` — `GitProvider` (+ integration tests)
 - `src/providers/archive.rs` — `TarProvider` / `ZipProvider` (+ tests)
-- `src/main.rs` — `wspm` CLI
+- `src/main.rs` — `ir` CLI

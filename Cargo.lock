@@ -904,6 +904,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
+name = "ir"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bzip2 0.4.4",
+ "clap",
+ "dirs",
+ "flate2",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "url",
+ "wait-timeout",
+ "xz2",
+ "zip",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2162,30 +2186,6 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
-
-[[package]]
-name = "wspm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bzip2 0.4.4",
- "clap",
- "dirs",
- "flate2",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tar",
- "tempfile",
- "thiserror",
- "url",
- "wait-timeout",
- "xz2",
- "zip",
-]
 
 [[package]]
 name = "xattr"

@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, WspmError};
+use crate::error::{Result, IrError};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
 use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};
@@ -34,7 +34,7 @@ impl GitProvider {
     fn bare_of(entry: &CacheEntry) -> Result<&Path> {
         match entry {
             CacheEntry::BareRepo(p) => Ok(p),
-            CacheEntry::Archive(_) => Err(WspmError::Unsupported(
+            CacheEntry::Archive(_) => Err(IrError::Unsupported(
                 "GitProvider got an archive cache entry".into(),
             )),
         }
@@ -50,7 +50,7 @@ impl GitProvider {
             .args(["rev-parse", "--verify", &format!("{rev}^{{commit}}")]);
         match process::run(&mut cmd, LOCAL_TIMEOUT) {
             Ok(out) => Ok(Some(out.stdout_trimmed())),
-            Err(WspmError::CommandFailed { .. }) => Ok(None),
+            Err(IrError::CommandFailed { .. }) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -75,7 +75,7 @@ impl GitProvider {
                 return Ok(hash);
             }
         }
-        Err(WspmError::NoDefaultBranch(url.to_string()))
+        Err(IrError::NoDefaultBranch(url.to_string()))
     }
 
     fn ref_rev(&self, bare: &Path, name: &str) -> Result<String> {
@@ -96,7 +96,7 @@ impl GitProvider {
                 return Ok(hash);
             }
         }
-        Err(WspmError::RevisionNotFound(name.to_string()))
+        Err(IrError::RevisionNotFound(name.to_string()))
     }
 
     fn commit_rev(&self, bare: &Path, hash: &str) -> Result<String> {
@@ -110,7 +110,7 @@ impl GitProvider {
             .arg(bare)
             .args(["fetch", "--depth", "1", "origin", hash]);
         let _ = process::run(&mut fetch, DEFAULT_TIMEOUT);
-        Self::rev_parse(bare, hash)?.ok_or_else(|| WspmError::RevisionNotFound(hash.to_string()))
+        Self::rev_parse(bare, hash)?.ok_or_else(|| IrError::RevisionNotFound(hash.to_string()))
     }
 }
 
@@ -167,7 +167,7 @@ impl Provider for GitProvider {
             VersionSpec::Ref(name) => self.ref_rev(bare, name)?,
             VersionSpec::Revision(hash) => self.commit_rev(bare, hash)?,
             VersionSpec::Subdir(d) => {
-                return Err(WspmError::Unsupported(format!(
+                return Err(IrError::Unsupported(format!(
                     "in-archive subdirectory '{d}' is only valid for tar/zip sources"
                 )));
             }
@@ -203,7 +203,7 @@ impl Provider for GitProvider {
         dest: &Path,
     ) -> Result<()> {
         if dest.exists() {
-            return Err(WspmError::DestExists(dest.to_path_buf()));
+            return Err(IrError::DestExists(dest.to_path_buf()));
         }
         let bare = Self::bare_of(entry)?;
         let rev = resolved.revision()?;
@@ -282,8 +282,8 @@ mod tests {
             process::run(&mut c, LOCAL_TIMEOUT).unwrap()
         };
         run(&["init", "-b", "main"]);
-        run(&["config", "user.email", "test@wspm"]);
-        run(&["config", "user.name", "wspm-test"]);
+        run(&["config", "user.email", "test@ir"]);
+        run(&["config", "user.name", "ir-test"]);
         fs::write(p.join("a.txt"), "hello\n").unwrap();
         fs::write(
             p.join(".repos"),

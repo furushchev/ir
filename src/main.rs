@@ -1,4 +1,4 @@
-//! wspm: workspace package manager CLI.
+//! ir: workspace package manager CLI.
 //!
 //! Phase 0: manifest discovery/parsing (`resolve` prints the normalized
 //! dependency list). Other commands are wired up but not yet implemented.
@@ -6,11 +6,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use wspm_core::{discover_manifest, load_manifest, ManifestEntry};
+use ir_core::{discover_manifest, load_manifest, ManifestEntry};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "wspm",
+    name = "ir",
     version,
     about = "Workspace package manager for .repos/.rosinstall workspaces"
 )]
@@ -74,7 +74,7 @@ fn workspace_dir(cli: &Cli) -> Result<PathBuf> {
     }
 }
 
-fn load(cli: &Cli) -> Result<wspm_core::Manifest> {
+fn load(cli: &Cli) -> Result<ir_core::Manifest> {
     let dir = workspace_dir(cli)?;
     let manifest_path = match &cli.manifest {
         Some(p) => p.clone(),

@@ -5,7 +5,7 @@
 //!   the sha256 of the archive content (the pin written to the lockfile).
 //!   A manifest `version` on an archive names a subdirectory inside the
 //!   archive root (rosinstall `tar` semantics).
-//! * Materialization: extract into `dest` plus a `.wspm-archive` marker file
+//! * Materialization: extract into `dest` plus a `.ir-archive` marker file
 //!   recording the content hash, used by [`Provider::status`].
 //!
 //! Zip Slip protection: archive entries with absolute paths or `..`
@@ -18,12 +18,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, WspmError};
+use crate::error::{Result, IrError};
 use crate::manifest::{validate_relative_path, RepoSpec, SourceKind, VersionSpec};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 /// Marker file written at the root of an extracted archive.
-const MARKER: &str = ".wspm-archive";
+const MARKER: &str = ".ir-archive";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ArchiveMarker {
@@ -61,7 +61,7 @@ fn archive_ext(url: &str) -> Result<&'static str> {
             return Ok(ext);
         }
     }
-    Err(WspmError::Archive(format!(
+    Err(IrError::Archive(format!(
         "cannot determine archive type of '{url}'"
     )))
 }
@@ -90,7 +90,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     let resp = reqwest::blocking::get(url)?;
     let resp = resp
         .error_for_status()
-        .map_err(|e| WspmError::Http(e.to_string()))?;
+        .map_err(|e| IrError::Http(e.to_string()))?;
     let mut file = fs::File::create(dest)?;
     let mut resp = resp;
     io::copy(&mut resp, &mut file)?;
@@ -111,7 +111,7 @@ fn subdir_of(version: &VersionSpec) -> Result<Option<PathBuf>> {
     match version {
         VersionSpec::Subdir(d) => Ok(Some(validate_relative_path(d)?)),
         VersionSpec::Default => Ok(None),
-        VersionSpec::Ref(r) | VersionSpec::Revision(r) => Err(WspmError::Unsupported(format!(
+        VersionSpec::Ref(r) | VersionSpec::Revision(r) => Err(IrError::Unsupported(format!(
             "archive sources take a subdirectory as version, got '{r}'"
         ))),
     }
@@ -125,7 +125,7 @@ fn open_tar_reader(path: &Path, ext: &str) -> Result<Box<dyn io::Read>> {
         "tar.xz" => Box::new(xz2::read::XzDecoder::new(file)),
         "tar" => Box::new(file),
         _ => {
-            return Err(WspmError::Archive(format!(
+            return Err(IrError::Archive(format!(
                 "unsupported tar extension: {ext}"
             )));
         }
@@ -136,9 +136,9 @@ fn open_tar_reader(path: &Path, ext: &str) -> Result<Box<dyn io::Read>> {
 fn sanitize_entry(raw: &Path) -> Result<PathBuf> {
     let s = raw
         .to_str()
-        .ok_or_else(|| WspmError::Archive(format!("non-UTF8 entry path: {}", raw.display())))?;
+        .ok_or_else(|| IrError::Archive(format!("non-UTF8 entry path: {}", raw.display())))?;
     validate_relative_path(s)
-        .map_err(|_| WspmError::Archive(format!("unsafe archive entry path: {}", raw.display())))
+        .map_err(|_| IrError::Archive(format!("unsafe archive entry path: {}", raw.display())))
 }
 
 fn extract_tar(archive: &Path, ext: &str, dest: &Path) -> Result<()> {
@@ -146,13 +146,13 @@ fn extract_tar(archive: &Path, ext: &str, dest: &Path) -> Result<()> {
     let mut ar = tar::Archive::new(reader);
     let entries = ar
         .entries()
-        .map_err(|e| WspmError::Archive(e.to_string()))?;
+        .map_err(|e| IrError::Archive(e.to_string()))?;
     for entry in entries {
-        let mut entry = entry.map_err(|e| WspmError::Archive(e.to_string()))?;
+        let mut entry = entry.map_err(|e| IrError::Archive(e.to_string()))?;
         let rel = sanitize_entry(
             &entry
                 .path()
-                .map_err(|e| WspmError::Archive(e.to_string()))?,
+                .map_err(|e| IrError::Archive(e.to_string()))?,
         )?;
         let target = dest.join(&rel);
         let ftype = entry.header().entry_type();
@@ -164,7 +164,7 @@ fn extract_tar(archive: &Path, ext: &str, dest: &Path) -> Result<()> {
             }
             entry
                 .unpack(&target)
-                .map_err(|e| WspmError::Archive(e.to_string()))?;
+                .map_err(|e| IrError::Archive(e.to_string()))?;
         }
         // Symlinks and other special entries are skipped in Phase 1.
     }
@@ -173,14 +173,14 @@ fn extract_tar(archive: &Path, ext: &str, dest: &Path) -> Result<()> {
 
 fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
     let file = fs::File::open(archive)?;
-    let mut ar = zip::ZipArchive::new(file).map_err(|e| WspmError::Archive(e.to_string()))?;
+    let mut ar = zip::ZipArchive::new(file).map_err(|e| IrError::Archive(e.to_string()))?;
     for i in 0..ar.len() {
         let mut entry = ar
             .by_index(i)
-            .map_err(|e| WspmError::Archive(e.to_string()))?;
+            .map_err(|e| IrError::Archive(e.to_string()))?;
         let rel = entry
             .enclosed_name()
-            .ok_or_else(|| WspmError::Archive(format!("unsafe zip entry at index {i}")))?;
+            .ok_or_else(|| IrError::Archive(format!("unsafe zip entry at index {i}")))?;
         // enclosed_name already rejects absolute paths and `..`; re-validate
         // for a single code path.
         let rel = sanitize_entry(&rel)?;
@@ -202,7 +202,7 @@ fn extract(kind: SourceKind, archive: &Path, dest: &Path) -> Result<()> {
     match kind {
         SourceKind::Tar => extract_tar(archive, archive_ext_from_path(archive)?, dest),
         SourceKind::Zip => extract_zip(archive, dest),
-        _ => Err(WspmError::Unsupported(format!(
+        _ => Err(IrError::Unsupported(format!(
             "{kind} is not an archive kind"
         ))),
     }
@@ -213,21 +213,21 @@ fn archive_ext_from_path(path: &Path) -> Result<&'static str> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| WspmError::Archive("cannot determine cached archive type".into()))?;
+        .ok_or_else(|| IrError::Archive("cannot determine cached archive type".into()))?;
     // name is `<hexkey>.<ext>`; match the longest known suffix.
     for ext in ["tar.gz", "tar.bz2", "tar.xz", "tar", "zip"] {
         if name.ends_with(&format!(".{ext}")) {
             return Ok(ext);
         }
     }
-    Err(WspmError::Archive(format!(
+    Err(IrError::Archive(format!(
         "cannot determine cached archive type of '{name}'"
     )))
 }
 
 fn write_marker(dest: &Path, marker: &ArchiveMarker) -> Result<()> {
     let json =
-        serde_json::to_string_pretty(marker).map_err(|e| WspmError::Archive(e.to_string()))?;
+        serde_json::to_string_pretty(marker).map_err(|e| IrError::Archive(e.to_string()))?;
     fs::write(dest.join(MARKER), json)?;
     Ok(())
 }
@@ -240,7 +240,7 @@ fn read_marker(dest: &Path) -> Result<Option<ArchiveMarker>> {
     let content = fs::read_to_string(&path)?;
     serde_json::from_str(&content)
         .map(Some)
-        .map_err(|e| WspmError::Archive(format!("corrupt marker file: {e}")))
+        .map_err(|e| IrError::Archive(format!("corrupt marker file: {e}")))
 }
 
 /// Extract to a temp dir and return the content of `rel`, looked up under
@@ -253,7 +253,7 @@ fn read_from_archive(
     rel: &str,
 ) -> Result<Option<Vec<u8>>> {
     let rel = validate_relative_path(rel)
-        .map_err(|_| WspmError::Archive(format!("unsafe relative path requested: {rel}")))?;
+        .map_err(|_| IrError::Archive(format!("unsafe relative path requested: {rel}")))?;
     let tmp = tempfile::tempdir()?;
     extract(kind, archive, tmp.path())?;
     let mut candidates = Vec::new();
@@ -286,7 +286,7 @@ macro_rules! impl_archive_provider {
 
             fn resolve(&self, entry: &CacheEntry, version: &VersionSpec) -> Result<Resolved> {
                 let CacheEntry::Archive(path) = entry else {
-                    return Err(WspmError::Unsupported(format!(
+                    return Err(IrError::Unsupported(format!(
                         "{} got a non-archive cache entry",
                         stringify!($name)
                     )));
@@ -304,12 +304,12 @@ macro_rules! impl_archive_provider {
                 rel: &str,
             ) -> Result<Option<Vec<u8>>> {
                 let CacheEntry::Archive(path) = entry else {
-                    return Err(WspmError::Unsupported(
+                    return Err(IrError::Unsupported(
                         "expected archive cache entry".into(),
                     ));
                 };
                 let Resolved::Archive { subdir, .. } = resolved else {
-                    return Err(WspmError::Unsupported("expected archive resolution".into()));
+                    return Err(IrError::Unsupported("expected archive resolution".into()));
                 };
                 read_from_archive($kind, path, subdir.as_deref(), rel)
             }
@@ -322,15 +322,15 @@ macro_rules! impl_archive_provider {
                 dest: &Path,
             ) -> Result<()> {
                 if dest.exists() {
-                    return Err(WspmError::DestExists(dest.to_path_buf()));
+                    return Err(IrError::DestExists(dest.to_path_buf()));
                 }
                 let CacheEntry::Archive(path) = entry else {
-                    return Err(WspmError::Unsupported(
+                    return Err(IrError::Unsupported(
                         "expected archive cache entry".into(),
                     ));
                 };
                 let Resolved::Archive { sha256, subdir } = resolved else {
-                    return Err(WspmError::Unsupported("expected archive resolution".into()));
+                    return Err(IrError::Unsupported("expected archive resolution".into()));
                 };
                 if let Some(parent) = dest.parent() {
                     fs::create_dir_all(parent)?;

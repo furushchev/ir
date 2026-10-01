@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, WspmError};
+use crate::error::{Result, IrError};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
 
 /// An exactly-pinned version, ready to be written to the lockfile.
@@ -27,7 +27,7 @@ impl Resolved {
     pub fn revision(&self) -> Result<&str> {
         match self {
             Resolved::Revision(r) => Ok(r),
-            Resolved::Archive { .. } => Err(WspmError::Unsupported(
+            Resolved::Archive { .. } => Err(IrError::Unsupported(
                 "expected a VCS revision, got an archive".into(),
             )),
         }
@@ -83,7 +83,7 @@ pub fn provider_for(kind: SourceKind) -> Result<Box<dyn Provider>> {
         SourceKind::Git => Ok(Box::new(crate::providers::GitProvider)),
         SourceKind::Tar => Ok(Box::new(crate::providers::TarProvider)),
         SourceKind::Zip => Ok(Box::new(crate::providers::ZipProvider)),
-        SourceKind::Hg | SourceKind::Svn | SourceKind::Bzr => Err(WspmError::Unsupported(format!(
+        SourceKind::Hg | SourceKind::Svn | SourceKind::Bzr => Err(IrError::Unsupported(format!(
             "{kind} provider is planned for Phase 4"
         ))),
     }

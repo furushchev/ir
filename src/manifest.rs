@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
-use crate::error::{Result, WspmError};
+use crate::error::{Result, IrError};
 
 /// Where a repository's content comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,7 +43,7 @@ impl SourceKind {
 }
 
 impl FromStr for SourceKind {
-    type Err = WspmError;
+    type Err = IrError;
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
@@ -53,7 +53,7 @@ impl FromStr for SourceKind {
             "bzr" | "bazaar" => Ok(SourceKind::Bzr),
             "tar" => Ok(SourceKind::Tar),
             "zip" => Ok(SourceKind::Zip),
-            other => Err(WspmError::UnknownKind(other.to_string())),
+            other => Err(IrError::UnknownKind(other.to_string())),
         }
     }
 }
@@ -163,7 +163,7 @@ pub fn normalize_url(raw: &str) -> String {
 pub fn validate_relative_path(raw: &str) -> Result<PathBuf> {
     let p = Path::new(raw);
     if p.is_absolute() {
-        return Err(WspmError::InvalidPath {
+        return Err(IrError::InvalidPath {
             path: raw.to_string(),
             reason: "absolute paths are not allowed; use a workspace-relative path".into(),
         });
@@ -172,14 +172,14 @@ pub fn validate_relative_path(raw: &str) -> Result<PathBuf> {
     for comp in p.components() {
         match comp {
             Component::Prefix(_) | Component::RootDir => {
-                return Err(WspmError::InvalidPath {
+                return Err(IrError::InvalidPath {
                     path: raw.to_string(),
                     reason: "absolute paths are not allowed".into(),
                 });
             }
             Component::CurDir => {}
             Component::ParentDir => {
-                return Err(WspmError::InvalidPath {
+                return Err(IrError::InvalidPath {
                     path: raw.to_string(),
                     reason: "`..` would escape the workspace".into(),
                 });
@@ -188,7 +188,7 @@ pub fn validate_relative_path(raw: &str) -> Result<PathBuf> {
         }
     }
     if out.as_os_str().is_empty() {
-        return Err(WspmError::InvalidPath {
+        return Err(IrError::InvalidPath {
             path: raw.to_string(),
             reason: "empty path".into(),
         });
@@ -224,7 +224,7 @@ fn default_kind() -> String {
 /// Parse a `.repos` (vcstool) document into normalized specs.
 pub fn parse_repos(content: &str, source: &Path) -> Result<Vec<RepoSpec>> {
     let file: ReposFile = serde_yaml::from_str(content)
-        .map_err(|e| WspmError::manifest_parse(source, e.to_string()))?;
+        .map_err(|e| IrError::manifest_parse(source, e.to_string()))?;
     let mut specs = Vec::with_capacity(file.repositories.len());
     for (path, entry) in file.repositories {
         let kind = SourceKind::from_str(&entry.kind)?;
@@ -292,7 +292,7 @@ fn mapping_get_string(map: &serde_yaml::Mapping, key: &str, source: &Path) -> Re
     map.get(serde_yaml::Value::String(key.to_string()))
         .and_then(yaml_to_string)
         .ok_or_else(|| {
-            WspmError::manifest_parse(
+            IrError::manifest_parse(
                 source,
                 format!("missing required key '{key}'"),
             )
@@ -302,18 +302,18 @@ fn mapping_get_string(map: &serde_yaml::Mapping, key: &str, source: &Path) -> Re
 /// Parse a `.rosinstall` document.
 pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
     let docs: Vec<HashMap<String, serde_yaml::Value>> = serde_yaml::from_str(content)
-        .map_err(|e| WspmError::manifest_parse(source, e.to_string()))?;
+        .map_err(|e| IrError::manifest_parse(source, e.to_string()))?;
     let mut entries = Vec::with_capacity(docs.len());
     for (idx, mut doc) in docs.into_iter().enumerate() {
         if doc.len() != 1 {
-            return Err(WspmError::manifest_parse(
+            return Err(IrError::manifest_parse(
                 source,
                 format!("element #{idx}: expected exactly one top-level key"),
             ));
         }
         let (kind_key, value) = doc.drain().next().expect("len == 1");
         let mapping = value.as_mapping().ok_or_else(|| {
-            WspmError::manifest_parse(
+            IrError::manifest_parse(
                 source,
                 format!("element #{idx} ('{kind_key}'): expected a mapping"),
             )
@@ -340,7 +340,7 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
             "other" => entries.push(ManifestEntry::Other { local_name }),
             "setup-file" => entries.push(ManifestEntry::SetupFile { local_name }),
             other => {
-                return Err(WspmError::manifest_parse(
+                return Err(IrError::manifest_parse(
                     source,
                     format!("element #{idx}: unknown key '{other}'"),
                 ));
@@ -361,7 +361,7 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
 /// Unknown extensions fall back to trying `.repos` first, then `.rosinstall`.
 pub fn load_manifest(path: &Path) -> Result<Manifest> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        WspmError::manifest_parse(path, format!("cannot read file: {e}"))
+        IrError::manifest_parse(path, format!("cannot read file: {e}"))
     })?;
     let name = path
         .file_name()
@@ -395,7 +395,7 @@ pub fn discover_manifest(dir: &Path) -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-    Err(WspmError::ManifestNotFound(dir.to_path_buf()))
+    Err(IrError::ManifestNotFound(dir.to_path_buf()))
 }
 
 // ---------------------------------------------------------------------------
