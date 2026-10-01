@@ -18,10 +18,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::cache::{Cache, CacheEntry};
+use crate::cache::{fetch_interval_from_env, Cache, CacheEntry};
 use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
-use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
+use crate::process::{self, RetryPolicy, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 pub struct BzrProvider;
@@ -56,6 +56,19 @@ impl BzrProvider {
             cmd.arg(a);
         }
         process::run(&mut cmd, timeout)
+    }
+
+    fn run_in_retry(
+        dir: &Path,
+        args: &[&str],
+        timeout: std::time::Duration,
+    ) -> Result<process::CmdOutput> {
+        let mut cmd = Self::bzr_cmd();
+        cmd.current_dir(dir);
+        for a in args {
+            cmd.arg(a);
+        }
+        process::run_retry(&mut cmd, timeout, &RetryPolicy::from_env())
     }
 
     fn mirror_of(entry: &CacheEntry) -> Result<&Path> {
@@ -112,9 +125,14 @@ impl Provider for BzrProvider {
             }
             let mut branch = Self::bzr_cmd();
             branch.arg("branch").arg(&spec.url).arg(&mirror);
-            process::run(&mut branch, DEFAULT_TIMEOUT)?;
+            process::run_retry(&mut branch, DEFAULT_TIMEOUT, &RetryPolicy::from_env())?;
+            let _ = cache.mark_fetched(SourceKind::Bzr, &key);
         }
-        let _ = Self::run_in(&mirror, &["pull"], DEFAULT_TIMEOUT);
+        let interval = fetch_interval_from_env();
+        if cache.fetch_due(SourceKind::Bzr, &key, interval) {
+            let _ = Self::run_in_retry(&mirror, &["pull"], DEFAULT_TIMEOUT);
+            let _ = cache.mark_fetched(SourceKind::Bzr, &key);
+        }
         Ok(CacheEntry::BareRepo(mirror))
     }
 

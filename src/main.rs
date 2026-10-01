@@ -44,6 +44,17 @@ struct Cli {
     #[arg(long, global = true, value_enum, default_value = "text")]
     format: FormatArg,
 
+    /// Total attempts for each network operation (fetch/pull/download).
+    /// Also settable via IR_RETRIES.
+    #[arg(long, global = true)]
+    retries: Option<u32>,
+
+    /// Skip network fetches for mirrors fetched more recently than this
+    /// ("30s", "10m", "1h"; "0" = always fetch, the default).
+    /// Also settable via IR_FETCH_INTERVAL.
+    #[arg(long, global = true)]
+    fetch_interval: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -123,6 +134,14 @@ fn workspace_dir(cli: &Cli) -> Result<PathBuf> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Network tuning flags feed the library through the environment so the
+    // provider layer needs no extra plumbing.
+    if let Some(n) = cli.retries {
+        std::env::set_var("IR_RETRIES", n.max(1).to_string());
+    }
+    if let Some(ref d) = cli.fetch_interval {
+        std::env::set_var("IR_FETCH_INTERVAL", d);
+    }
     let dir = workspace_dir(&cli)?;
     let format = Format::from(cli.format);
     let jobs_default = || {

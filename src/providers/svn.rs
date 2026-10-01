@@ -24,7 +24,7 @@ use std::process::Command;
 use crate::cache::{Cache, CacheEntry};
 use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
-use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
+use crate::process::{self, RetryPolicy, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 pub struct SvnProvider;
@@ -61,7 +61,7 @@ impl SvnProvider {
             cmd.args(["-r", r]);
         }
         cmd.arg(target);
-        match process::run(&mut cmd, DEFAULT_TIMEOUT) {
+        match process::run_retry(&mut cmd, DEFAULT_TIMEOUT, &RetryPolicy::from_env()) {
             Ok(out) => Ok(Self::parse_revision(&out.stdout_trimmed())),
             Err(IrError::CommandFailed { .. }) => Ok(None),
             Err(e) => Err(e),
@@ -86,11 +86,13 @@ impl Provider for SvnProvider {
         let _ = cache.key(&spec.normalized_url());
         let mut info = Self::svn_cmd();
         info.args(["info", &spec.url]);
-        process::run(&mut info, DEFAULT_TIMEOUT).map_err(|e| match e {
-            IrError::CommandFailed { .. } => {
-                IrError::Unsupported(format!("cannot reach svn repository '{}'", spec.url))
+        process::run_retry(&mut info, DEFAULT_TIMEOUT, &RetryPolicy::from_env()).map_err(|e| {
+            match e {
+                IrError::CommandFailed { .. } => {
+                    IrError::Unsupported(format!("cannot reach svn repository '{}'", spec.url))
+                }
+                other => other,
             }
-            other => other,
         })?;
         Ok(CacheEntry::Remote(spec.url.clone()))
     }
@@ -136,7 +138,7 @@ impl Provider for SvnProvider {
         );
         let mut cat = Self::svn_cmd();
         cat.args(["cat", "-r", rev, &file_url]);
-        match process::run(&mut cat, DEFAULT_TIMEOUT) {
+        match process::run_retry(&mut cat, DEFAULT_TIMEOUT, &RetryPolicy::from_env()) {
             Ok(out) => Ok(Some(out.stdout)),
             Err(IrError::CommandFailed { .. }) => Ok(None),
             Err(e) => Err(e),
@@ -165,7 +167,7 @@ impl Provider for SvnProvider {
         }
         let mut co = Self::svn_cmd();
         co.args(["checkout", "-q", "-r", rev, url]).arg(dest);
-        if let Err(e) = process::run(&mut co, DEFAULT_TIMEOUT) {
+        if let Err(e) = process::run_retry(&mut co, DEFAULT_TIMEOUT, &RetryPolicy::from_env()) {
             let _ = fs::remove_dir_all(dest);
             return Err(e);
         }
@@ -383,7 +385,7 @@ mod tests {
             .unwrap();
         assert!(String::from_utf8(content).unwrap().contains("child:"));
 
-        // r1 has no .repos? No — .repos was added in r1. Use a missing name.
+        // r1 has no .repos? No - .repos was added in r1. Use a missing name.
         assert!(provider
             .read_file(
                 &entry,

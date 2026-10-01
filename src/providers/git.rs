@@ -16,10 +16,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::cache::{Cache, CacheEntry};
+use crate::cache::{fetch_interval_from_env, Cache, CacheEntry};
 use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
-use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
+use crate::process::{self, RetryPolicy, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 pub struct GitProvider;
@@ -161,12 +161,19 @@ impl Provider for GitProvider {
                 .args(["remote", "add", "origin", &spec.url]);
             process::run(&mut remote, LOCAL_TIMEOUT)?;
         }
+        // Throttle network fetches: with --fetch-interval, a recent mirror
+        // is reused without hitting the network (still self-repairing above).
+        let interval = fetch_interval_from_env();
+        if !cache.fetch_due(SourceKind::Git, &key, interval) {
+            return Ok(CacheEntry::BareRepo(bare));
+        }
         let mut fetch = Self::git_cmd();
         fetch
             .arg("-C")
             .arg(&bare)
             .args(["fetch", "origin", "--prune", "--tags"]);
-        process::run(&mut fetch, DEFAULT_TIMEOUT)?;
+        process::run_retry(&mut fetch, DEFAULT_TIMEOUT, &RetryPolicy::from_env())?;
+        let _ = cache.mark_fetched(SourceKind::Git, &key);
         // Best-effort: point refs/remotes/origin/HEAD at the default branch
         // (only `git clone` sets it up automatically).
         let mut set_head = Self::git_cmd();

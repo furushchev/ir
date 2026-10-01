@@ -379,7 +379,7 @@ mod tests {
             repo_spec("right", right.to_str().unwrap(), VersionSpec::Default),
         ]);
         let repos = resolve_all(&manifest, &tmp.path().join("cache")).unwrap();
-        // left, left/shared, right — right/shared dedupes against left/shared? No:
+        // left, left/shared, right - right/shared dedupes against left/shared? No:
         // different paths (left/shared vs right/shared), so both are recorded.
         let paths: Vec<_> = repos.iter().map(|r| r.spec.path.clone()).collect();
         assert_eq!(

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use crate::cache::{Cache, CacheEntry};
 use crate::error::{IrError, Result};
 use crate::manifest::{validate_relative_path, RepoSpec, SourceKind, VersionSpec};
+use crate::process::{retry, RetryPolicy};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 /// Marker file written at the root of an extracted archive.
@@ -87,14 +88,21 @@ fn download(url: &str, dest: &Path) -> Result<()> {
         fs::copy(url, dest)?;
         return Ok(());
     }
-    let resp = reqwest::blocking::get(url)?;
-    let resp = resp
-        .error_for_status()
-        .map_err(|e| IrError::Http(e.to_string()))?;
-    let mut file = fs::File::create(dest)?;
-    let mut resp = resp;
-    io::copy(&mut resp, &mut file)?;
-    Ok(())
+    let policy = RetryPolicy::from_env();
+    retry(&policy, || {
+        let resp = reqwest::blocking::get(url)?;
+        let resp = resp
+            .error_for_status()
+            .map_err(|e| IrError::Http(e.to_string()))?;
+        let mut file = fs::File::create(dest)?;
+        let mut resp = resp;
+        io::copy(&mut resp, &mut file)?;
+        Ok(())
+    })
+    .inspect_err(|_| {
+        // Don't leave a partial download behind for the next attempt.
+        let _ = fs::remove_file(dest);
+    })
 }
 
 fn ensure_downloaded(cache: &Cache, spec: &RepoSpec) -> Result<PathBuf> {

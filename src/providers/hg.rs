@@ -17,10 +17,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::cache::{Cache, CacheEntry};
+use crate::cache::{fetch_interval_from_env, Cache, CacheEntry};
 use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
-use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
+use crate::process::{self, RetryPolicy, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
 pub struct HgProvider;
@@ -92,11 +92,16 @@ impl Provider for HgProvider {
             }
             let mut clone = Self::hg_cmd();
             clone.args(["clone", "--noupdate", &spec.url]).arg(&mirror);
-            process::run(&mut clone, DEFAULT_TIMEOUT)?;
+            process::run_retry(&mut clone, DEFAULT_TIMEOUT, &RetryPolicy::from_env())?;
+            let _ = cache.mark_fetched(SourceKind::Hg, &key);
         }
-        let mut pull = Self::hg_cmd();
-        pull.arg("-R").arg(&mirror).arg("pull");
-        let _ = process::run(&mut pull, DEFAULT_TIMEOUT);
+        let interval = fetch_interval_from_env();
+        if cache.fetch_due(SourceKind::Hg, &key, interval) {
+            let mut pull = Self::hg_cmd();
+            pull.arg("-R").arg(&mirror).arg("pull");
+            let _ = process::run_retry(&mut pull, DEFAULT_TIMEOUT, &RetryPolicy::from_env());
+            let _ = cache.mark_fetched(SourceKind::Hg, &key);
+        }
         Ok(CacheEntry::BareRepo(mirror))
     }
 
