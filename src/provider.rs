@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, IrError};
+use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
 
 /// An exactly-pinned version, ready to be written to the lockfile.

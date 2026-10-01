@@ -17,15 +17,16 @@
 //! manifest are interpreted relative to the directory containing that
 //! manifest file (for a top-level manifest that is the workspace root).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
-use crate::error::{Result, IrError};
+use crate::error::{IrError, Result};
 
 /// Where a repository's content comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     Git,
     Hg,
@@ -73,7 +74,7 @@ impl std::fmt::Display for SourceKind {
 }
 
 /// How the desired version of a repository is expressed in a manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VersionSpec {
     /// No version given: use the VCS default branch (or archive root).
     Default,
@@ -291,12 +292,7 @@ fn yaml_to_string(v: &serde_yaml::Value) -> Option<String> {
 fn mapping_get_string(map: &serde_yaml::Mapping, key: &str, source: &Path) -> Result<String> {
     map.get(serde_yaml::Value::String(key.to_string()))
         .and_then(yaml_to_string)
-        .ok_or_else(|| {
-            IrError::manifest_parse(
-                source,
-                format!("missing required key '{key}'"),
-            )
-        })
+        .ok_or_else(|| IrError::manifest_parse(source, format!("missing required key '{key}'")))
 }
 
 /// Parse a `.rosinstall` document.
@@ -360,9 +356,8 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
 /// Load a manifest file, choosing the parser by file name.
 /// Unknown extensions fall back to trying `.repos` first, then `.rosinstall`.
 pub fn load_manifest(path: &Path) -> Result<Manifest> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        IrError::manifest_parse(path, format!("cannot read file: {e}"))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| IrError::manifest_parse(path, format!("cannot read file: {e}")))?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())

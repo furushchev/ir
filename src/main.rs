@@ -1,12 +1,12 @@
 //! ir: workspace package manager CLI.
 //!
-//! Phase 0: manifest discovery/parsing (`resolve` prints the normalized
-//! dependency list). Other commands are wired up but not yet implemented.
+//! `resolve` recursively resolves the workspace manifest and writes `ir.lock`.
+//! Other commands are wired up but not yet implemented.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use ir_core::{discover_manifest, load_manifest, Cache, Resolver, LOCKFILE_NAME};
 use std::path::PathBuf;
-use ir_core::{discover_manifest, load_manifest, ManifestEntry};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,7 +31,7 @@ struct Cli {
 enum Command {
     /// Create an empty workspace manifest.
     Init,
-    /// Resolve dependencies recursively and print the normalized list.
+    /// Resolve dependencies recursively and write ir.lock.
     Resolve,
     /// Fetch, place and version-sync every repository (needs lockfile).
     Sync,
@@ -84,32 +84,29 @@ fn load(cli: &Cli) -> Result<ir_core::Manifest> {
 }
 
 fn cmd_resolve(cli: &Cli) -> Result<()> {
+    let dir = workspace_dir(cli)?;
     let manifest = load(cli)?;
-    println!("# from {}", manifest.source.display());
-    for entry in &manifest.entries {
-        match entry {
-            ManifestEntry::Repo(spec) => {
-                let sparse = if spec.subpaths.is_empty() {
-                    String::new()
-                } else {
-                    format!("  sparse=[{}]", spec.subpaths.join(","))
-                };
-                println!(
-                    "{} [{}] {} @ {}{}",
-                    spec.path.display(),
-                    spec.kind,
-                    spec.normalized_url(),
-                    spec.version,
-                    sparse
-                );
-            }
-            ManifestEntry::Other { local_name } => {
-                println!("# other: {local_name} (no VCS action)");
-            }
-            ManifestEntry::SetupFile { local_name } => {
-                println!("# setup-file: {local_name} (no VCS action)");
-            }
-        }
+    let cache = Cache::new().map_err(anyhow::Error::from)?;
+    let repos = Resolver::new(&cache)
+        .resolve(&manifest)
+        .map_err(anyhow::Error::from)?;
+    let lock_path = dir.join(LOCKFILE_NAME);
+    ir_core::write_lock(&lock_path, &repos).map_err(anyhow::Error::from)?;
+    println!(
+        "# resolved {} repositories -> {}",
+        repos.len(),
+        lock_path.display()
+    );
+    for r in &repos {
+        let indent = "  ".repeat(r.depth);
+        println!(
+            "{indent}{} [{}] {} @ {} -> {}",
+            r.spec.path.display(),
+            r.spec.kind,
+            r.spec.normalized_url(),
+            r.spec.version,
+            r.pin()
+        );
     }
     Ok(())
 }

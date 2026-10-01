@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-use crate::error::{Result, IrError};
+use crate::error::{IrError, Result};
 
 /// Default timeout for network-heavy commands (clone, fetch).
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);

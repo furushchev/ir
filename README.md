@@ -4,32 +4,33 @@ Workspace package manager (Rust): recursively resolve repository dependencies
 declared in `.repos` (vcstool format) or `.rosinstall` files, pin versions in a
 lockfile, and fetch / place / version-sync every repository into a workspace —
 uv-style, but for source workspaces instead of Python packages.
+(The name is `uv` inverted: packages in, repos out — or the other way round.)
 
-## Status: Phase 1 complete
+## Status: Phase 2 complete
 
 - [x] Phase 0 — CLI skeleton + `.repos` / `.rosinstall` parsers + normalization
       (`RepoSpec { path, kind, url, version }`, path-traversal rejection,
       URL normalization for cache keys)
 - [x] Phase 1 — `Provider` trait (all VCS via `std::process`), `GitProvider`
-      (bare-mirror cache, `init --bare` + `remote add` for uniform ref layout,
-      resolve default/ref/hash, detached materialize, sparse subpaths,
-      dirty detection), `TarProvider`/`ZipProvider` (download, sha256 cache,
-      safe extraction with Zip-Slip rejection, `.ir-archive` marker files)
-- [ ] Phase 2 — recursive resolver + `ir.lock` (TOML, sha256 pinning) +
-      conflict / cycle detection
-- [ ] Phase 3 — cache layer + parallel sync + `indicatif` progress UI
+      (bare-mirror cache, uniform ref layout, default/ref/hash resolution,
+      detached materialize, sparse subpaths, dirty detection),
+      `TarProvider`/`ZipProvider` (download, sha256 cache, Zip-Slip-safe
+      extraction, `.ir-archive` marker files)
+- [x] Phase 2 — recursive resolver + `ir.lock` (TOML, exact pins) +
+      cycle / path / version conflict detection
+- [ ] Phase 3 — parallel sync + `indicatif` progress UI
 - [ ] Phase 4 — Hg / Svn / Bzr providers
 - [ ] Phase 5 — `status`, `export`, `update`, `add`, `prune`, JSON output,
       shell completions
 - [ ] Phase 6 — retries, shallow-fetch tuning, docs
 
-## Usage (Phase 1)
+## Usage (Phase 2)
 
 ```sh
 cargo build
-./target/debug/ir -C /path/to/workspace resolve   # parse + print normalized deps
+./target/debug/ir -C /path/to/workspace resolve   # recursive resolve -> ir.lock
 ./target/debug/ir --manifest /path/to/.rosinstall resolve
-cargo test     # 13 tests: manifest parsing + git/archive provider round-trips
+cargo test     # 20 tests: manifest, providers, resolver, lockfile
 ```
 
 ## Layout
@@ -40,6 +41,8 @@ cargo test     # 13 tests: manifest parsing + git/archive provider round-trips
 - `src/process.rs` — `std::process::Command` runner with timeouts
 - `src/cache.rs` — cache root, bare git mirrors, archive downloads
 - `src/provider.rs` — `Provider` trait + `provider_for` dispatch
+- `src/resolve.rs` — recursive `Resolver` (cycle / conflict detection)
+- `src/lock.rs` — `ir.lock` read/write (TOML)
 - `src/providers/git.rs` — `GitProvider` (+ integration tests)
 - `src/providers/archive.rs` — `TarProvider` / `ZipProvider` (+ tests)
 - `src/main.rs` — `ir` CLI

@@ -55,6 +55,27 @@ pub enum IrError {
     #[error("http error: {0}")]
     Http(String),
 
+    #[error("dependency cycle detected: {chain}")]
+    Cycle { chain: String },
+
+    #[error(
+        "path conflict: '{path}' is declared with two different URLs ('{url_a}' vs '{url_b}')"
+    )]
+    PathConflict {
+        path: PathBuf,
+        url_a: String,
+        url_b: String,
+    },
+
+    #[error(
+        "version conflict: '{path}' is required at two different revisions ({rev_a} vs {rev_b})"
+    )]
+    VersionConflict {
+        path: PathBuf,
+        rev_a: String,
+        rev_b: String,
+    },
+
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
 
@@ -63,6 +84,12 @@ pub enum IrError {
 
     #[error(transparent)]
     Yaml(#[from] serde_yaml::Error),
+
+    #[error(transparent)]
+    TomlSer(#[from] toml::ser::Error),
+
+    #[error(transparent)]
+    TomlDe(#[from] toml::de::Error),
 }
 
 pub type Result<T> = std::result::Result<T, IrError>;

@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, IrError};
+use crate::error::{IrError, Result};
 use crate::manifest::{RepoSpec, SourceKind, VersionSpec};
 use crate::process::{self, DEFAULT_TIMEOUT, LOCAL_TIMEOUT};
 use crate::provider::{Provider, Resolved, WorktreeState};

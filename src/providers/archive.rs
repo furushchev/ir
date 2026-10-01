@@ -18,7 +18,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::cache::{Cache, CacheEntry};
-use crate::error::{Result, IrError};
+use crate::error::{IrError, Result};
 use crate::manifest::{validate_relative_path, RepoSpec, SourceKind, VersionSpec};
 use crate::provider::{Provider, Resolved, WorktreeState};
 
@@ -144,16 +144,10 @@ fn sanitize_entry(raw: &Path) -> Result<PathBuf> {
 fn extract_tar(archive: &Path, ext: &str, dest: &Path) -> Result<()> {
     let reader = open_tar_reader(archive, ext)?;
     let mut ar = tar::Archive::new(reader);
-    let entries = ar
-        .entries()
-        .map_err(|e| IrError::Archive(e.to_string()))?;
+    let entries = ar.entries().map_err(|e| IrError::Archive(e.to_string()))?;
     for entry in entries {
         let mut entry = entry.map_err(|e| IrError::Archive(e.to_string()))?;
-        let rel = sanitize_entry(
-            &entry
-                .path()
-                .map_err(|e| IrError::Archive(e.to_string()))?,
-        )?;
+        let rel = sanitize_entry(&entry.path().map_err(|e| IrError::Archive(e.to_string()))?)?;
         let target = dest.join(&rel);
         let ftype = entry.header().entry_type();
         if ftype.is_dir() {
@@ -226,8 +220,7 @@ fn archive_ext_from_path(path: &Path) -> Result<&'static str> {
 }
 
 fn write_marker(dest: &Path, marker: &ArchiveMarker) -> Result<()> {
-    let json =
-        serde_json::to_string_pretty(marker).map_err(|e| IrError::Archive(e.to_string()))?;
+    let json = serde_json::to_string_pretty(marker).map_err(|e| IrError::Archive(e.to_string()))?;
     fs::write(dest.join(MARKER), json)?;
     Ok(())
 }
@@ -304,9 +297,7 @@ macro_rules! impl_archive_provider {
                 rel: &str,
             ) -> Result<Option<Vec<u8>>> {
                 let CacheEntry::Archive(path) = entry else {
-                    return Err(IrError::Unsupported(
-                        "expected archive cache entry".into(),
-                    ));
+                    return Err(IrError::Unsupported("expected archive cache entry".into()));
                 };
                 let Resolved::Archive { subdir, .. } = resolved else {
                     return Err(IrError::Unsupported("expected archive resolution".into()));
@@ -325,9 +316,7 @@ macro_rules! impl_archive_provider {
                     return Err(IrError::DestExists(dest.to_path_buf()));
                 }
                 let CacheEntry::Archive(path) = entry else {
-                    return Err(IrError::Unsupported(
-                        "expected archive cache entry".into(),
-                    ));
+                    return Err(IrError::Unsupported("expected archive cache entry".into()));
                 };
                 let Resolved::Archive { sha256, subdir } = resolved else {
                     return Err(IrError::Unsupported("expected archive resolution".into()));
