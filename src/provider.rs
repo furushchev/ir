@@ -75,16 +75,27 @@ pub trait Provider: Send + Sync {
 
     /// Inspect the current state of `dest`.
     fn status(&self, dest: &Path) -> Result<WorktreeState>;
+
+    /// Relative paths (to `dest`) with local changes: modified, added,
+    /// removed, or untracked files. The sync engine uses this to tell
+    /// ir-managed nested repositories apart from real local modifications:
+    /// changes strictly under a nested repository path do not mark the
+    /// parent dirty. Returns `None` when the provider cannot enumerate
+    /// changes; the engine then falls back to [`WorktreeState::dirty`].
+    fn changed_paths(&self, dest: &Path) -> Result<Option<Vec<PathBuf>>> {
+        let _ = dest;
+        Ok(None)
+    }
 }
 
 /// Build the provider for a source kind.
 pub fn provider_for(kind: SourceKind) -> Result<Box<dyn Provider>> {
     match kind {
         SourceKind::Git => Ok(Box::new(crate::providers::GitProvider)),
+        SourceKind::Hg => Ok(Box::new(crate::providers::HgProvider)),
+        SourceKind::Svn => Ok(Box::new(crate::providers::SvnProvider)),
+        SourceKind::Bzr => Ok(Box::new(crate::providers::BzrProvider)),
         SourceKind::Tar => Ok(Box::new(crate::providers::TarProvider)),
         SourceKind::Zip => Ok(Box::new(crate::providers::ZipProvider)),
-        SourceKind::Hg | SourceKind::Svn | SourceKind::Bzr => Err(IrError::Unsupported(format!(
-            "{kind} provider is planned for Phase 4"
-        ))),
     }
 }

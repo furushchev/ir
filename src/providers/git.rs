@@ -13,7 +13,7 @@
 //! instead of hanging on a password prompt.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cache::{Cache, CacheEntry};
@@ -34,8 +34,8 @@ impl GitProvider {
     fn bare_of(entry: &CacheEntry) -> Result<&Path> {
         match entry {
             CacheEntry::BareRepo(p) => Ok(p),
-            CacheEntry::Archive(_) => Err(IrError::Unsupported(
-                "GitProvider got an archive cache entry".into(),
+            CacheEntry::Archive(_) | CacheEntry::Remote(_) => Err(IrError::Unsupported(
+                "GitProvider got a non-mirror cache entry".into(),
             )),
         }
     }
@@ -249,16 +249,44 @@ impl Provider for GitProvider {
         let current = process::run(&mut rp, LOCAL_TIMEOUT)
             .ok()
             .map(|o| o.stdout_trimmed());
-        let mut st = Self::git_cmd();
-        st.arg("-C").arg(dest).args(["status", "--porcelain"]);
-        let dirty = !process::run(&mut st, LOCAL_TIMEOUT)?
-            .stdout_trimmed()
-            .is_empty();
+        let dirty = self
+            .changed_paths(dest)?
+            .map(|p| !p.is_empty())
+            .unwrap_or(true);
         Ok(WorktreeState {
             present: true,
             dirty,
             current,
         })
+    }
+
+    fn changed_paths(&self, dest: &Path) -> Result<Option<Vec<PathBuf>>> {
+        if !dest.join(".git").exists() {
+            return Ok(None);
+        }
+        // NUL-separated porcelain: `XY path\0` per entry, no quoting issues.
+        // --no-renames avoids the `old -> new` two-path rename entries.
+        let mut st = Self::git_cmd();
+        st.arg("-C").arg(dest).args([
+            "status",
+            "--porcelain=v1",
+            "--no-renames",
+            "-z",
+            "--untracked-files=all",
+        ]);
+        let out = process::run(&mut st, LOCAL_TIMEOUT)?;
+        let mut paths = Vec::new();
+        for entry in out.stdout.split(|b| *b == 0) {
+            if entry.is_empty() {
+                continue;
+            }
+            // Unexpected shape: fail safe to "unknown" rather than misread.
+            let Some(raw) = entry.get(3..).filter(|p| !p.is_empty()) else {
+                return Ok(None);
+            };
+            paths.push(PathBuf::from(String::from_utf8_lossy(raw).into_owned()));
+        }
+        Ok(Some(paths))
     }
 }
 

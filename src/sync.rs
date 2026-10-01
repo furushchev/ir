@@ -45,6 +45,11 @@ pub struct SyncOptions {
 }
 
 /// Sync every locked repository into `dir`, in parallel.
+///
+/// Repositories are synced shallowest-first: a parent is always
+/// materialized before the nested repositories inside it, so a child can
+/// never observe (or create) a half-materialized parent. Within one depth
+/// everything runs concurrently.
 pub fn sync_workspace(
     dir: &Path,
     cache: &Cache,
@@ -58,16 +63,31 @@ pub fn sync_workspace(
         .num_threads(opts.jobs.max(1))
         .build()
         .expect("failed to build sync thread pool");
-    let outcomes: Vec<SyncOutcome> = pool.install(|| {
-        repos
-            .par_iter()
-            .map(|locked| {
-                let outcome = sync_one(dir, cache, locked, opts, &progress, &key_locks);
-                progress.inc();
-                outcome
-            })
-            .collect()
-    });
+
+    // Group by path depth; BTreeMap iterates shallowest first.
+    let mut by_depth: std::collections::BTreeMap<usize, Vec<&LockedRepo>> =
+        std::collections::BTreeMap::new();
+    for repo in repos {
+        by_depth
+            .entry(repo.path.components().count())
+            .or_default()
+            .push(repo);
+    }
+
+    let mut outcomes = Vec::with_capacity(repos.len());
+    for group in by_depth.into_values() {
+        let mut group_outcomes: Vec<SyncOutcome> = pool.install(|| {
+            group
+                .par_iter()
+                .map(|locked| {
+                    let outcome = sync_one(dir, cache, repos, locked, opts, &progress, &key_locks);
+                    progress.inc();
+                    outcome
+                })
+                .collect()
+        });
+        outcomes.append(&mut group_outcomes);
+    }
     progress.finish();
     outcomes
 }
@@ -75,6 +95,7 @@ pub fn sync_workspace(
 fn sync_one(
     dir: &Path,
     cache: &Cache,
+    repos: &[LockedRepo],
     locked: &LockedRepo,
     opts: &SyncOptions,
     progress: &SyncProgress,
@@ -82,7 +103,7 @@ fn sync_one(
 ) -> SyncOutcome {
     let label = locked.path.display().to_string();
     let bar = progress.repo_spinner(&label);
-    let status = match sync_one_inner(dir, cache, locked, opts, key_locks, &bar) {
+    let status = match sync_one_inner(dir, cache, repos, locked, opts, key_locks, &bar) {
         Ok(s) => s,
         Err(e) => SyncStatus::Failed(e.to_string()),
     };
@@ -102,6 +123,7 @@ fn sync_one(
 fn sync_one_inner(
     dir: &Path,
     cache: &Cache,
+    repos: &[LockedRepo],
     locked: &LockedRepo,
     opts: &SyncOptions,
     key_locks: &Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -139,8 +161,25 @@ fn sync_one_inner(
 
     let dest = dir.join(&locked.path);
     let state = provider.status(&dest)?;
-    if state.present && !state.dirty && pin_matches(&resolved, state.current.as_deref()) {
-        return Ok(SyncStatus::UpToDate);
+    if state.present && pin_matches(&resolved, state.current.as_deref()) {
+        // Changes strictly under a nested managed repository are ir's own
+        // doing (it materialized them there); only other local changes
+        // count as dirty for the up-to-date decision.
+        let nested: Vec<PathBuf> = repos
+            .iter()
+            .map(|r| &r.path)
+            .filter(|p| *p != &locked.path && p.starts_with(&locked.path))
+            .filter_map(|p| p.strip_prefix(&locked.path).ok().map(PathBuf::from))
+            .collect();
+        let dirty = match provider.changed_paths(&dest)? {
+            Some(paths) => paths
+                .iter()
+                .any(|p| !nested.iter().any(|n| p == n || p.starts_with(n))),
+            None => state.dirty,
+        };
+        if !dirty {
+            return Ok(SyncStatus::UpToDate);
+        }
     }
     if state.present && !opts.force {
         return Ok(SyncStatus::Skipped(
@@ -313,6 +352,70 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(ws.join("one/a.txt")).unwrap(),
             "hello"
+        );
+    }
+
+    #[test]
+    fn sync_nested_repo_does_not_dirty_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::with_root(tmp.path().join("cache"));
+        let r1 = git_repo(&tmp.path().join("r1"), &[("a.txt", "hello")]);
+        let r2 = git_repo(&tmp.path().join("r2"), &[("b.txt", "world")]);
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let locked = resolve_to_lock(
+            &ws,
+            vec![
+                repo_spec("parent", r1.to_str().unwrap()),
+                repo_spec("parent/child", r2.to_str().unwrap()),
+            ],
+            &cache,
+        );
+
+        // First sync materializes parent before child (depth order).
+        let outcomes = sync_workspace(&ws, &cache, &locked, &opts(false));
+        assert!(outcomes
+            .iter()
+            .all(|o| matches!(o.status, SyncStatus::Synced)));
+        assert_eq!(
+            std::fs::read_to_string(ws.join("parent/child/b.txt")).unwrap(),
+            "world"
+        );
+
+        // Second sync: the nested checkout inside the parent must not
+        // mark the parent dirty.
+        let outcomes = sync_workspace(&ws, &cache, &locked, &opts(false));
+        assert!(
+            outcomes
+                .iter()
+                .all(|o| matches!(o.status, SyncStatus::UpToDate)),
+            "got {:?}",
+            outcomes
+                .iter()
+                .map(|o| (&o.path, &o.status))
+                .collect::<Vec<_>>()
+        );
+
+        // But a genuine local change in the parent still skips it.
+        std::fs::write(ws.join("parent/local.txt"), "mine").unwrap();
+        let outcomes = sync_workspace(&ws, &cache, &locked, &opts(false));
+        let parent = outcomes
+            .iter()
+            .find(|o| o.path.as_os_str() == "parent")
+            .unwrap();
+        assert!(
+            matches!(parent.status, SyncStatus::Skipped(_)),
+            "got {:?}",
+            parent.status
+        );
+        let child = outcomes
+            .iter()
+            .find(|o| o.path.as_os_str() == "parent/child")
+            .unwrap();
+        assert!(
+            matches!(child.status, SyncStatus::UpToDate),
+            "got {:?}",
+            child.status
         );
     }
 

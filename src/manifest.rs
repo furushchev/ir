@@ -88,14 +88,35 @@ pub enum VersionSpec {
 }
 
 impl VersionSpec {
-    fn classify(raw: Option<&str>, is_archive: bool) -> Self {
+    fn classify(raw: Option<&str>, kind: SourceKind) -> Self {
         match raw.map(str::trim).filter(|s| !s.is_empty()) {
             None => VersionSpec::Default,
-            Some(s) if is_archive => VersionSpec::Subdir(s.to_string()),
+            Some(s) if kind.is_archive() => VersionSpec::Subdir(s.to_string()),
             Some(s) if is_hex_hash(s) => VersionSpec::Revision(s.to_string()),
+            // hg/svn/bzr revisions are small integers ("1"); a branch/tag
+            // that is all digits would resolve as a revision number in the
+            // native CLI too, so classify it as a revision.
+            Some(s)
+                if matches!(kind, SourceKind::Hg | SourceKind::Svn | SourceKind::Bzr)
+                    && is_int_rev(kind, s) =>
+            {
+                VersionSpec::Revision(s.to_string())
+            }
             Some(s) => VersionSpec::Ref(s.to_string()),
         }
     }
+}
+
+/// All-digit revision, with an optional leading `r` for svn (`r123`).
+fn is_int_rev(kind: SourceKind, s: &str) -> bool {
+    let digits = match kind {
+        SourceKind::Svn => s
+            .strip_prefix('r')
+            .or_else(|| s.strip_prefix('R'))
+            .unwrap_or(s),
+        _ => s,
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 impl std::fmt::Display for VersionSpec {
@@ -231,7 +252,7 @@ pub fn parse_repos(content: &str, source: &Path) -> Result<Vec<RepoSpec>> {
         let kind = SourceKind::from_str(&entry.kind)?;
         let version = VersionSpec::classify(
             entry.version.as_ref().and_then(yaml_to_string).as_deref(),
-            kind.is_archive(),
+            kind,
         );
         specs.push(RepoSpec {
             path: validate_relative_path(&path)?,
@@ -329,7 +350,7 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
                     path: validate_relative_path(&local_name)?,
                     kind,
                     url: uri,
-                    version: VersionSpec::classify(version.as_deref(), kind.is_archive()),
+                    version: VersionSpec::classify(version.as_deref(), kind),
                     subpaths: Vec::new(),
                 }));
             }
@@ -439,8 +460,8 @@ repositories:
         let svn = &specs[1];
         assert_eq!(svn.path, Path::new("old_tools/rosinstall"));
         assert_eq!(svn.kind, SourceKind::Svn);
-        // numeric YAML version becomes a string ref
-        assert_eq!(svn.version, VersionSpec::Ref("748".into()));
+        // numeric YAML version becomes a revision for svn
+        assert_eq!(svn.version, VersionSpec::Revision("748".into()));
 
         let sparse = specs
             .iter()
@@ -488,8 +509,9 @@ repositories:
         assert_eq!(repos.len(), 3);
         assert_eq!(repos[0].path, Path::new("src/nav"));
         assert_eq!(repos[0].version, VersionSpec::Ref("main".into()));
-        // numeric version stays a ref (branch/tag semantics for hg)
-        assert_eq!(repos[1].version, VersionSpec::Ref("123".into()));
+        // numeric version is a revision for hg (local revision numbers
+        // resolve natively, just like a unique hash prefix)
+        assert_eq!(repos[1].version, VersionSpec::Revision("123".into()));
         assert_eq!(repos[2].kind, SourceKind::Tar);
         assert!(matches!(m.entries[3], ManifestEntry::Other { .. }));
         assert!(matches!(m.entries[4], ManifestEntry::SetupFile { .. }));
@@ -523,22 +545,45 @@ repositories:
 
     #[test]
     fn version_classification() {
-        assert_eq!(VersionSpec::classify(None, false), VersionSpec::Default);
+        use SourceKind as K;
+        assert_eq!(VersionSpec::classify(None, K::Git), VersionSpec::Default);
         assert_eq!(
-            VersionSpec::classify(Some("  "), false),
+            VersionSpec::classify(Some("  "), K::Git),
             VersionSpec::Default
         );
         assert_eq!(
-            VersionSpec::classify(Some("main"), false),
+            VersionSpec::classify(Some("main"), K::Git),
             VersionSpec::Ref("main".into())
         );
         assert!(matches!(
-            VersionSpec::classify(Some("a3f9c1d2"), false),
+            VersionSpec::classify(Some("a3f9c1d2"), K::Git),
             VersionSpec::Revision(_)
         ));
         assert_eq!(
-            VersionSpec::classify(Some("foo-1.2.0"), true),
+            VersionSpec::classify(Some("foo-1.2.0"), K::Tar),
             VersionSpec::Subdir("foo-1.2.0".into())
+        );
+        // hg/svn/bzr integer revisions classify as Revision, not Ref.
+        assert_eq!(
+            VersionSpec::classify(Some("1"), K::Svn),
+            VersionSpec::Revision("1".into())
+        );
+        assert_eq!(
+            VersionSpec::classify(Some("r12"), K::Svn),
+            VersionSpec::Revision("r12".into())
+        );
+        assert_eq!(
+            VersionSpec::classify(Some("2"), K::Hg),
+            VersionSpec::Revision("2".into())
+        );
+        assert_eq!(
+            VersionSpec::classify(Some("3"), K::Bzr),
+            VersionSpec::Revision("3".into())
+        );
+        // ...but stay a Ref for git (a branch could be named "123").
+        assert_eq!(
+            VersionSpec::classify(Some("123"), K::Git),
+            VersionSpec::Ref("123".into())
         );
     }
 

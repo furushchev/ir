@@ -2,9 +2,14 @@
 //!
 //! ```text
 //! <cache>/ir/
-//!   git/<sha256(url)>/        bare mirrors, one per repository URL
+//!   git/<sha256(url)>/        bare git mirrors, one per repository URL
+//!   hg/<sha256(url)>/         local hg clones (--noupdate), one per URL
+//!   bzr/<sha256(url)>/        local bzr branches, one per URL
 //!   archives/<sha256(url)>.<ext>   downloaded tar/zip files
 //! ```
+//!
+//! Subversion has no offline mirror primitive, so svn sources are resolved
+//! and checked out from the remote directly ([`CacheEntry::Remote`]).
 //!
 //! The cache root defaults to `$XDG_CACHE_HOME/ir` (or `~/.cache/ir`).
 
@@ -12,14 +17,18 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 use crate::error::Result;
+use crate::manifest::SourceKind;
 
 /// A local cache entry produced by [`Provider::ensure_cached`].
 #[derive(Debug, Clone)]
 pub enum CacheEntry {
-    /// A bare repository mirror.
+    /// A local repository mirror (bare git mirror, hg clone, bzr branch).
     BareRepo(PathBuf),
     /// A downloaded archive file.
     Archive(PathBuf),
+    /// No local mirror: operations go to the remote directly (svn).
+    /// Holds the repository URL to use.
+    Remote(String),
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +68,20 @@ impl Cache {
 
     /// Directory holding the bare mirror for `key`.
     pub fn bare_dir(&self, key: &str) -> PathBuf {
-        self.root.join("git").join(key)
+        self.vcs_dir(SourceKind::Git, key)
+    }
+
+    /// Directory holding the local VCS mirror for `key` (`git/`, `hg/`,
+    /// `bzr/`; svn keeps no local mirror).
+    pub fn vcs_dir(&self, kind: SourceKind, key: &str) -> PathBuf {
+        let name = match kind {
+            SourceKind::Git => "git",
+            SourceKind::Hg => "hg",
+            SourceKind::Svn => "svn",
+            SourceKind::Bzr => "bzr",
+            SourceKind::Tar | SourceKind::Zip => "archives",
+        };
+        self.root.join(name).join(key)
     }
 
     /// File path for a downloaded archive.
