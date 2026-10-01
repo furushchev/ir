@@ -224,7 +224,7 @@ fn default_kind() -> String {
 /// Parse a `.repos` (vcstool) document into normalized specs.
 pub fn parse_repos(content: &str, source: &Path) -> Result<Vec<RepoSpec>> {
     let file: ReposFile = serde_yaml::from_str(content)
-        .map_err(|e| WspmError::manifest_parse(&source.to_path_buf(), e.to_string()))?;
+        .map_err(|e| WspmError::manifest_parse(source, e.to_string()))?;
     let mut specs = Vec::with_capacity(file.repositories.len());
     for (path, entry) in file.repositories {
         let kind = SourceKind::from_str(&entry.kind)?;
@@ -261,9 +261,13 @@ pub struct Manifest {
 pub enum ManifestEntry {
     Repo(RepoSpec),
     /// `other:` element: a workspace path with no VCS attached.
-    Other { local_name: String },
+    Other {
+        local_name: String,
+    },
     /// `setup-file:` element: a shell snippet path, no VCS action.
-    SetupFile { local_name: String },
+    SetupFile {
+        local_name: String,
+    },
 }
 
 impl Manifest {
@@ -284,16 +288,12 @@ fn yaml_to_string(v: &serde_yaml::Value) -> Option<String> {
     }
 }
 
-fn mapping_get_string(
-    map: &serde_yaml::Mapping,
-    key: &str,
-    source: &Path,
-) -> Result<String> {
-    map.get(&serde_yaml::Value::String(key.to_string()))
+fn mapping_get_string(map: &serde_yaml::Mapping, key: &str, source: &Path) -> Result<String> {
+    map.get(serde_yaml::Value::String(key.to_string()))
         .and_then(yaml_to_string)
         .ok_or_else(|| {
             WspmError::manifest_parse(
-                &source.to_path_buf(),
+                source,
                 format!("missing required key '{key}'"),
             )
         })
@@ -302,19 +302,19 @@ fn mapping_get_string(
 /// Parse a `.rosinstall` document.
 pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
     let docs: Vec<HashMap<String, serde_yaml::Value>> = serde_yaml::from_str(content)
-        .map_err(|e| WspmError::manifest_parse(&source.to_path_buf(), e.to_string()))?;
+        .map_err(|e| WspmError::manifest_parse(source, e.to_string()))?;
     let mut entries = Vec::with_capacity(docs.len());
     for (idx, mut doc) in docs.into_iter().enumerate() {
         if doc.len() != 1 {
             return Err(WspmError::manifest_parse(
-                &source.to_path_buf(),
+                source,
                 format!("element #{idx}: expected exactly one top-level key"),
             ));
         }
         let (kind_key, value) = doc.drain().next().expect("len == 1");
         let mapping = value.as_mapping().ok_or_else(|| {
             WspmError::manifest_parse(
-                &source.to_path_buf(),
+                source,
                 format!("element #{idx} ('{kind_key}'): expected a mapping"),
             )
         })?;
@@ -327,7 +327,7 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
                     mapping_get_string(mapping, "url", source)
                 })?;
                 let version = mapping
-                    .get(&serde_yaml::Value::String("version".to_string()))
+                    .get(serde_yaml::Value::String("version".to_string()))
                     .and_then(yaml_to_string);
                 entries.push(ManifestEntry::Repo(RepoSpec {
                     path: validate_relative_path(&local_name)?,
@@ -341,7 +341,7 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
             "setup-file" => entries.push(ManifestEntry::SetupFile { local_name }),
             other => {
                 return Err(WspmError::manifest_parse(
-                    &source.to_path_buf(),
+                    source,
                     format!("element #{idx}: unknown key '{other}'"),
                 ));
             }
@@ -360,11 +360,9 @@ pub fn parse_rosinstall(content: &str, source: &Path) -> Result<Manifest> {
 /// Load a manifest file, choosing the parser by file name.
 /// Unknown extensions fall back to trying `.repos` first, then `.rosinstall`.
 pub fn load_manifest(path: &Path) -> Result<Manifest> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| WspmError::manifest_parse(
-            &path.to_path_buf(),
-            format!("cannot read file: {e}"),
-        ))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        WspmError::manifest_parse(path, format!("cannot read file: {e}"))
+    })?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -449,14 +447,26 @@ repositories:
         // numeric YAML version becomes a string ref
         assert_eq!(svn.version, VersionSpec::Ref("748".into()));
 
-        let sparse = specs.iter().find(|s| s.path == Path::new("vendor/sparse")).unwrap();
-        assert_eq!(sparse.subpaths, vec!["sub/a".to_string(), "sub/b".to_string()]);
+        let sparse = specs
+            .iter()
+            .find(|s| s.path == Path::new("vendor/sparse"))
+            .unwrap();
+        assert_eq!(
+            sparse.subpaths,
+            vec!["sub/a".to_string(), "sub/b".to_string()]
+        );
         assert_eq!(sparse.version, VersionSpec::Default);
 
-        let pinned = specs.iter().find(|s| s.path == Path::new("pinned")).unwrap();
+        let pinned = specs
+            .iter()
+            .find(|s| s.path == Path::new("pinned"))
+            .unwrap();
         assert!(matches!(pinned.version, VersionSpec::Revision(_)));
 
-        let tar = specs.iter().find(|s| s.path == Path::new("vendored")).unwrap();
+        let tar = specs
+            .iter()
+            .find(|s| s.path == Path::new("vendored"))
+            .unwrap();
         assert_eq!(tar.kind, SourceKind::Tar);
         assert_eq!(tar.version, VersionSpec::Subdir("foo-1.2.0".into()));
     }
@@ -486,14 +496,8 @@ repositories:
         // numeric version stays a ref (branch/tag semantics for hg)
         assert_eq!(repos[1].version, VersionSpec::Ref("123".into()));
         assert_eq!(repos[2].kind, SourceKind::Tar);
-        assert!(matches!(
-            m.entries[3],
-            ManifestEntry::Other { .. }
-        ));
-        assert!(matches!(
-            m.entries[4],
-            ManifestEntry::SetupFile { .. }
-        ));
+        assert!(matches!(m.entries[3], ManifestEntry::Other { .. }));
+        assert!(matches!(m.entries[4], ManifestEntry::SetupFile { .. }));
     }
 
     #[test]
@@ -502,10 +506,7 @@ repositories:
         assert!(validate_relative_path("../escape").is_err());
         assert!(validate_relative_path("a/../../b").is_err());
         assert!(validate_relative_path("").is_err());
-        assert_eq!(
-            validate_relative_path("a/./b").unwrap(),
-            Path::new("a/b")
-        );
+        assert_eq!(validate_relative_path("a/./b").unwrap(), Path::new("a/b"));
     }
 
     #[test]
@@ -528,7 +529,10 @@ repositories:
     #[test]
     fn version_classification() {
         assert_eq!(VersionSpec::classify(None, false), VersionSpec::Default);
-        assert_eq!(VersionSpec::classify(Some("  "), false), VersionSpec::Default);
+        assert_eq!(
+            VersionSpec::classify(Some("  "), false),
+            VersionSpec::Default
+        );
         assert_eq!(
             VersionSpec::classify(Some("main"), false),
             VersionSpec::Ref("main".into())

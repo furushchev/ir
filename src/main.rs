@@ -6,10 +6,14 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use wspm_core::{ManifestEntry, discover_manifest, load_manifest};
+use wspm_core::{discover_manifest, load_manifest, ManifestEntry};
 
 #[derive(Parser, Debug)]
-#[command(name = "wspm", version, about = "Workspace package manager for .repos/.rosinstall workspaces")]
+#[command(
+    name = "wspm",
+    version,
+    about = "Workspace package manager for .repos/.rosinstall workspaces"
+)]
 struct Cli {
     /// Run as if started in <DIR> instead of the current directory.
     #[arg(short = 'C', long, global = true)]
@@ -32,9 +36,7 @@ enum Command {
     /// Fetch, place and version-sync every repository (needs lockfile).
     Sync,
     /// Re-resolve (and update) one repository or everything.
-    Update {
-        path: Option<String>,
-    },
+    Update { path: Option<String> },
     /// Show sync status of the workspace.
     Status,
     /// Export the workspace state as a .repos file (vcstool compatible).
